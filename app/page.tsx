@@ -17,118 +17,296 @@ const sessions = ["Asia", "London", "NY", "Overlap"];
 const setups = ["BOS", "MSS", "OB", "FVG", "Liquidity Grab", "Trend", "Scalp", "Other"];
 const emotions = ["Calm", "Neutral", "Anxious", "FOMO", "Confident", "Hesitant"];
 
-function calcPnL(direction, entry, exit, lots) {
+function calcPnL(direction: string, entry: string, exit: string, lots: string) {
   const e = parseFloat(entry), x = parseFloat(exit), l = parseFloat(lots);
   if (isNaN(e) || isNaN(x) || isNaN(l)) return null;
   return +((direction === "Long" ? x - e : e - x) * l * 100).toFixed(2);
 }
 
-function calcRR(direction, entry, sl, tp) {
+function calcRR(direction: string, entry: string, sl: string, tp: string) {
   const e = parseFloat(entry), s = parseFloat(sl), t = parseFloat(tp);
   if (isNaN(e) || isNaN(s) || isNaN(t)) return null;
   const risk = Math.abs(e - s);
   return risk === 0 ? null : +(Math.abs(t - e) / risk).toFixed(2);
 }
 
-function getWeekKey(dateStr) {
+function getWeekKey(dateStr: string) {
   const d = new Date(dateStr);
   const day = d.getDay() || 7;
   d.setDate(d.getDate() - day + 1);
   return d.toISOString().slice(0, 10);
 }
 
-function getMonthKey(dateStr) { return dateStr.slice(0, 7); }
+function getMonthKey(dateStr: string) { return dateStr.slice(0, 7); }
 
-function formatWeek(weekStart) {
+function formatWeek(weekStart: string) {
   const d = new Date(weekStart);
   const end = new Date(d); end.setDate(d.getDate() + 4);
-  const fmt = x => x.toLocaleDateString("fr-CA", { day: "numeric", month: "short" });
+  const fmt = (x: Date) => x.toLocaleDateString("fr-CA", { day: "numeric", month: "short" });
   return `${fmt(d)} — ${fmt(end)}`;
 }
 
-function formatMonth(monthKey) {
+function formatMonth(monthKey: string) {
   const [y, m] = monthKey.split("-");
-  return new Date(y, m - 1, 1).toLocaleDateString("fr-CA", { month: "long", year: "numeric" });
+  return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("fr-CA", { month: "long", year: "numeric" });
 }
 
-function groupTrades(trades, groupFn) {
-  const groups = {};
+function groupTrades(trades: any[], groupFn: (d: string) => string) {
+  const groups: Record<string, any[]> = {};
   trades.forEach(t => { const k = groupFn(t.date); if (!groups[k]) groups[k] = []; groups[k].push(t); });
   return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
 }
 
-function calcGroupStats(trades) {
+function calcGroupStats(trades: any[]) {
   const closed = trades.filter(t => t.exitPrice && t.lots);
   const wins = closed.filter(t => (calcPnL(t.direction, t.entry, t.exitPrice, t.lots) ?? 0) > 0);
   const losses = closed.filter(t => (calcPnL(t.direction, t.entry, t.exitPrice, t.lots) ?? 0) < 0);
   const totalPnl = closed.reduce((s, t) => s + (calcPnL(t.direction, t.entry, t.exitPrice, t.lots) || 0), 0);
   const rrTrades = closed.filter(t => t.rr);
-  const avgRR = rrTrades.length ? rrTrades.reduce((s, t) => s + parseFloat(t.rr || 0), 0) / rrTrades.length : null;
-  const best = closed.reduce((b, t) => { const p = calcPnL(t.direction, t.entry, t.exitPrice, t.lots) || 0; return p > (calcPnL(b?.direction, b?.entry, b?.exitPrice, b?.lots) || -Infinity) ? t : b; }, null);
-  const worst = closed.reduce((w, t) => { const p = calcPnL(t.direction, t.entry, t.exitPrice, t.lots) || 0; return p < (calcPnL(w?.direction, w?.entry, w?.exitPrice, w?.lots) || Infinity) ? t : w; }, null);
-  return { total: trades.length, closed: closed.length, wins: wins.length, losses: losses.length, winRate: closed.length ? Math.round((wins.length / closed.length) * 100) : 0, totalPnl: +totalPnl.toFixed(2), avgRR: avgRR !== null ? +avgRR.toFixed(2) : null, best, worst };
+  const avgRR = rrTrades.length ? rrTrades.reduce((s: number, t: any) => s + parseFloat(t.rr || 0), 0) / rrTrades.length : null;
+  const best = closed.reduce((b: any, t: any) => { const p = calcPnL(t.direction, t.entry, t.exitPrice, t.lots) || 0; return p > (calcPnL(b?.direction, b?.entry, b?.exitPrice, b?.lots) || -Infinity) ? t : b; }, null);
+  const worst = closed.reduce((w: any, t: any) => { const p = calcPnL(t.direction, t.entry, t.exitPrice, t.lots) || 0; return p < (calcPnL(w?.direction, w?.entry, w?.exitPrice, w?.lots) || Infinity) ? t : w; }, null);
+
+  const sessionBreakdown: Record<string, { count: number; pnl: number }> = {};
+  closed.forEach(t => {
+    const s = t.session || "?";
+    if (!sessionBreakdown[s]) sessionBreakdown[s] = { count: 0, pnl: 0 };
+    sessionBreakdown[s].count++;
+    sessionBreakdown[s].pnl += calcPnL(t.direction, t.entry, t.exitPrice, t.lots) || 0;
+  });
+
+  const setupBreakdown: Record<string, { count: number; wins: number; pnl: number }> = {};
+  closed.forEach(t => {
+    const s = t.setup || "Autre";
+    if (!setupBreakdown[s]) setupBreakdown[s] = { count: 0, wins: 0, pnl: 0 };
+    setupBreakdown[s].count++;
+    const p = calcPnL(t.direction, t.entry, t.exitPrice, t.lots) || 0;
+    if (p > 0) setupBreakdown[s].wins++;
+    setupBreakdown[s].pnl += p;
+  });
+
+  return {
+    total: trades.length, closed: closed.length, wins: wins.length, losses: losses.length,
+    winRate: closed.length ? Math.round((wins.length / closed.length) * 100) : 0,
+    totalPnl: +totalPnl.toFixed(2),
+    avgRR: avgRR !== null ? +avgRR.toFixed(2) : null,
+    best, worst, sessionBreakdown, setupBreakdown,
+    longTrades: closed.filter(t => t.direction === "Long").length,
+    shortTrades: closed.filter(t => t.direction === "Short").length,
+  };
 }
 
-function Badge({ children, color }) {
-  const colors = { green: "bg-emerald-900/60 text-emerald-300 border-emerald-700", red: "bg-red-900/60 text-red-300 border-red-700", gold: "bg-amber-900/60 text-amber-300 border-amber-700", blue: "bg-sky-900/60 text-sky-300 border-sky-700", gray: "bg-zinc-800 text-zinc-400 border-zinc-700" };
+function Badge({ children, color }: { children: React.ReactNode; color: string }) {
+  const colors: Record<string, string> = { green: "bg-emerald-900/60 text-emerald-300 border-emerald-700", red: "bg-red-900/60 text-red-300 border-red-700", gold: "bg-amber-900/60 text-amber-300 border-amber-700", blue: "bg-sky-900/60 text-sky-300 border-sky-700", gray: "bg-zinc-800 text-zinc-400 border-zinc-700" };
   return <span className={`text-xs px-2 py-0.5 rounded border font-mono ${colors[color] || colors.gray}`}>{children}</span>;
 }
 
-function StatCard({ label, value, sub, color }) {
-  const colors = { gold: "text-amber-400", green: "text-emerald-400", red: "text-red-400", white: "text-white" };
+function StatCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
+  const colors: Record<string, string> = { gold: "text-amber-400", green: "text-emerald-400", red: "text-red-400", white: "text-white" };
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 flex flex-col gap-1">
       <span className="text-zinc-500 text-xs uppercase tracking-widest font-mono">{label}</span>
-      <span className={`text-2xl font-bold font-mono ${colors[color] || "text-white"}`}>{value}</span>
+      <span className={`text-2xl font-bold font-mono ${colors[color || "white"] || "text-white"}`}>{value}</span>
       {sub && <span className="text-zinc-500 text-xs font-mono">{sub}</span>}
     </div>
   );
 }
 
-function SummaryBlock({ stats, pnlColor }) {
+function MiniBar({ value, max, color }: { value: number; max: number; color: string }) {
+  const pct = max > 0 ? Math.min(100, Math.round((Math.abs(value) / Math.abs(max)) * 100)) : 0;
   return (
-    <div className="grid grid-cols-2 gap-2 mb-3">
-      <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800"><div className="text-zinc-500 text-xs mb-1">P&L</div><div className={`font-bold font-mono text-lg ${pnlColor(stats.totalPnl)}`}>{stats.totalPnl >= 0 ? "+" : ""}${stats.totalPnl}</div></div>
-      <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800"><div className="text-zinc-500 text-xs mb-1">Win Rate</div><div className={`font-bold font-mono text-lg ${stats.winRate >= 50 ? "text-emerald-400" : "text-red-400"}`}>{stats.winRate}%</div></div>
-      <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800"><div className="text-zinc-500 text-xs mb-1">Trades</div><div className="font-bold font-mono text-white">{stats.closed} <span className="text-zinc-500 text-xs font-normal">({stats.wins}W / {stats.losses}L)</span></div></div>
-      <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800"><div className="text-zinc-500 text-xs mb-1">R:R Moyen</div><div className="font-bold font-mono text-amber-400">{stats.avgRR !== null ? `1:${stats.avgRR}` : "—"}</div></div>
-      {stats.best && <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800"><div className="text-zinc-500 text-xs mb-1">Meilleur</div><div className="font-bold font-mono text-emerald-400 text-sm">+${calcPnL(stats.best.direction, stats.best.entry, stats.best.exitPrice, stats.best.lots)}</div><div className="text-zinc-600 text-xs">{stats.best.date}</div></div>}
-      {stats.worst && <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800"><div className="text-zinc-500 text-xs mb-1">Pire</div><div className="font-bold font-mono text-red-400 text-sm">${calcPnL(stats.worst.direction, stats.worst.entry, stats.worst.exitPrice, stats.worst.lots)}</div><div className="text-zinc-600 text-xs">{stats.worst.date}</div></div>}
+    <div className="w-full bg-zinc-800 rounded-full h-1.5 mt-1">
+      <div className={`h-1.5 rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+function PnLSparkline({ trades }: { trades: any[] }) {
+  const closed = [...trades]
+    .filter(t => t.exitPrice && t.lots)
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || ""));
+
+  if (closed.length < 2) return null;
+
+  let cumulative = 0;
+  const points = closed.map(t => {
+    cumulative += calcPnL(t.direction, t.entry, t.exitPrice, t.lots) || 0;
+    return cumulative;
+  });
+
+  const min = Math.min(0, ...points);
+  const max = Math.max(...points);
+  const range = max - min || 1;
+  const W = 200, H = 48;
+
+  const pathD = points.map((p, i) => {
+    const x = (i / (points.length - 1)) * W;
+    const y = H - ((p - min) / range) * H;
+    return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+
+  const lastY = H - ((points[points.length - 1] - min) / range) * H;
+  const isPositive = points[points.length - 1] >= 0;
+
+  return (
+    <div className="bg-zinc-950 rounded-xl p-3 border border-zinc-800 mb-3">
+      <div className="text-zinc-500 text-xs mb-2 uppercase tracking-widest">Courbe P&L cumulatif</div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 48 }}>
+        <defs>
+          <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={isPositive ? "#10b981" : "#ef4444"} stopOpacity="0.3" />
+            <stop offset="100%" stopColor={isPositive ? "#10b981" : "#ef4444"} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={`${pathD} L${W},${H} L0,${H} Z`} fill="url(#sparkGrad)" />
+        <path d={pathD} stroke={isPositive ? "#10b981" : "#ef4444"} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx={((points.length - 1) / (points.length - 1)) * W} cy={lastY} r="3" fill={isPositive ? "#10b981" : "#ef4444"} />
+      </svg>
+      <div className="flex justify-between text-xs font-mono mt-1">
+        <span className="text-zinc-600">Trade 1</span>
+        <span className={isPositive ? "text-emerald-400" : "text-red-400"}>{isPositive ? "+" : ""}${points[points.length - 1].toFixed(2)}</span>
+      </div>
+    </div>
+  );
+}
+
+function SummaryBlock({ stats, pnlColor, trades }: { stats: ReturnType<typeof calcGroupStats>; pnlColor: (n: number) => string; trades: any[] }) {
+  const maxSetupPnl = Math.max(...Object.values(stats.setupBreakdown).map(s => Math.abs(s.pnl)));
+  const maxSessionPnl = Math.max(...Object.values(stats.sessionBreakdown).map(s => Math.abs(s.pnl)));
+
+  return (
+    <div className="mb-3">
+      <PnLSparkline trades={trades} />
+
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800">
+          <div className="text-zinc-500 text-xs mb-1">P&L</div>
+          <div className={`font-bold font-mono text-lg ${pnlColor(stats.totalPnl)}`}>{stats.totalPnl >= 0 ? "+" : ""}${stats.totalPnl}</div>
+        </div>
+        <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800">
+          <div className="text-zinc-500 text-xs mb-1">Win Rate</div>
+          <div className={`font-bold font-mono text-lg ${stats.winRate >= 50 ? "text-emerald-400" : "text-red-400"}`}>{stats.winRate}%</div>
+        </div>
+        <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800">
+          <div className="text-zinc-500 text-xs mb-1">Trades</div>
+          <div className="font-bold font-mono text-white">{stats.closed} <span className="text-zinc-500 text-xs font-normal">({stats.wins}W / {stats.losses}L)</span></div>
+        </div>
+        <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800">
+          <div className="text-zinc-500 text-xs mb-1">R:R Moyen</div>
+          <div className="font-bold font-mono text-amber-400">{stats.avgRR !== null ? `1:${stats.avgRR}` : "—"}</div>
+        </div>
+      </div>
+
+      {(stats.longTrades > 0 || stats.shortTrades > 0) && (
+        <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800 mb-3">
+          <div className="text-zinc-500 text-xs mb-2 uppercase tracking-widest">Long vs Short</div>
+          <div className="flex gap-2 items-center">
+            <div className="flex-1 bg-zinc-900 rounded-full h-2 overflow-hidden flex">
+              <div className="bg-emerald-500 h-full transition-all" style={{ width: `${stats.closed ? (stats.longTrades / stats.closed) * 100 : 0}%` }} />
+              <div className="bg-red-500 h-full transition-all" style={{ width: `${stats.closed ? (stats.shortTrades / stats.closed) * 100 : 0}%` }} />
+            </div>
+          </div>
+          <div className="flex justify-between text-xs font-mono mt-1.5">
+            <span className="text-emerald-400">Long: {stats.longTrades}</span>
+            <span className="text-red-400">Short: {stats.shortTrades}</span>
+          </div>
+        </div>
+      )}
+
+      {(stats.best || stats.worst) && (
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          {stats.best && (
+            <div className="bg-zinc-950 rounded-lg p-3 border border-emerald-900/40">
+              <div className="text-zinc-500 text-xs mb-1">🏆 Meilleur</div>
+              <div className="font-bold font-mono text-emerald-400 text-sm">+${calcPnL(stats.best.direction, stats.best.entry, stats.best.exitPrice, stats.best.lots)}</div>
+              <div className="text-zinc-600 text-xs mt-0.5">{stats.best.date}{stats.best.setup ? ` · ${stats.best.setup}` : ""}</div>
+            </div>
+          )}
+          {stats.worst && (
+            <div className="bg-zinc-950 rounded-lg p-3 border border-red-900/40">
+              <div className="text-zinc-500 text-xs mb-1">📉 Pire</div>
+              <div className="font-bold font-mono text-red-400 text-sm">${calcPnL(stats.worst.direction, stats.worst.entry, stats.worst.exitPrice, stats.worst.lots)}</div>
+              <div className="text-zinc-600 text-xs mt-0.5">{stats.worst.date}{stats.worst.setup ? ` · ${stats.worst.setup}` : ""}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {Object.keys(stats.setupBreakdown).length > 0 && (
+        <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800 mb-3">
+          <div className="text-zinc-500 text-xs mb-3 uppercase tracking-widest">Performance par Setup</div>
+          <div className="flex flex-col gap-2">
+            {Object.entries(stats.setupBreakdown)
+              .sort((a, b) => b[1].pnl - a[1].pnl)
+              .map(([setup, s]) => (
+                <div key={setup}>
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <span className="text-zinc-300 text-xs font-mono">{setup}</span>
+                      <span className="text-zinc-600 text-xs">{s.count}x · {s.count > 0 ? Math.round((s.wins / s.count) * 100) : 0}%WR</span>
+                    </div>
+                    <span className={`text-xs font-mono font-bold ${s.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>{s.pnl >= 0 ? "+" : ""}${s.pnl.toFixed(2)}</span>
+                  </div>
+                  <MiniBar value={s.pnl} max={maxSetupPnl} color={s.pnl >= 0 ? "bg-emerald-500" : "bg-red-500"} />
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {Object.keys(stats.sessionBreakdown).length > 0 && (
+        <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800 mb-3">
+          <div className="text-zinc-500 text-xs mb-3 uppercase tracking-widest">Performance par Session</div>
+          <div className="flex flex-col gap-2">
+            {Object.entries(stats.sessionBreakdown)
+              .sort((a, b) => b[1].pnl - a[1].pnl)
+              .map(([session, s]) => (
+                <div key={session}>
+                  <div className="flex justify-between items-center">
+                    <span className="text-zinc-300 text-xs font-mono">{session} <span className="text-zinc-600">{s.count}x</span></span>
+                    <span className={`text-xs font-mono font-bold ${s.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>{s.pnl >= 0 ? "+" : ""}${s.pnl.toFixed(2)}</span>
+                  </div>
+                  <MiniBar value={s.pnl} max={maxSessionPnl} color={s.pnl >= 0 ? "bg-sky-500" : "bg-red-500"} />
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 export default function TradingJournal() {
-  const [trades, setTrades] = useState(() => { try { const s = localStorage.getItem(STORAGE_KEY); return s ? JSON.parse(s) : []; } catch { return []; } });
+  const [trades, setTrades] = useState<any[]>(() => { try { const s = localStorage.getItem(STORAGE_KEY); return s ? JSON.parse(s) : []; } catch { return []; } });
   const [view, setView] = useState("log");
   const [form, setForm] = useState(initialForm);
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useState<any>(null);
   const [filterDir, setFilterDir] = useState("All");
   const [filterType, setFilterType] = useState("All");
-  const [expandedGroup, setExpandedGroup] = useState(null);
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
 
   useEffect(() => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(trades)); } catch {} }, [trades]);
 
   const rr = useMemo(() => calcRR(form.direction, form.entry, form.sl, form.tp), [form.direction, form.entry, form.sl, form.tp]);
   const livePnL = useMemo(() => calcPnL(form.direction, form.entry, form.exitPrice, form.lots), [form.direction, form.entry, form.exitPrice, form.lots]);
   const stats = useMemo(() => trades.length ? calcGroupStats(trades) : null, [trades]);
-  const filteredTrades = useMemo(() => trades.filter(t => (filterDir === "All" || t.direction === filterDir) && (filterType === "All" || t.type === filterType)).sort((a, b) => b.date.localeCompare(a.date) || (b.time ?? "").localeCompare(a.time ?? "")), [trades, filterDir, filterType]);
+  const filteredTrades = useMemo(() => trades.filter((t: any) => (filterDir === "All" || t.direction === filterDir) && (filterType === "All" || t.type === filterType)).sort((a: any, b: any) => b.date.localeCompare(a.date) || (b.time ?? "").localeCompare(a.time ?? "")), [trades, filterDir, filterType]);
   const weeklyGroups = useMemo(() => groupTrades(trades, getWeekKey), [trades]);
   const monthlyGroups = useMemo(() => groupTrades(trades, getMonthKey), [trades]);
 
-  function handleChange(e) { const { name, value, type, checked } = e.target; setForm(f => ({ ...f, [name]: type === "checkbox" ? checked : value })); }
-  function handleSubmit() { if (!form.entry || !form.lots) return; setTrades(t => [{ ...form, id: Date.now(), rr: form.rr || rr }, ...t]); setForm(initialForm); setView("log"); }
-  function deleteTrade(id) { setTrades(t => t.filter(x => x.id !== id)); setSelected(null); setView("log"); }
+  function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) { const { name, value, type } = e.target; const checked = (e.target as HTMLInputElement).checked; setForm(f => ({ ...f, [name]: type === "checkbox" ? checked : value })); }
+  function handleSubmit() { if (!form.entry || !form.lots) return; setTrades((t: any[]) => [{ ...form, id: Date.now(), rr: form.rr || rr }, ...t]); setForm(initialForm); setView("log"); }
+  function deleteTrade(id: number) { setTrades((t: any[]) => t.filter((x: any) => x.id !== id)); setSelected(null); setView("log"); }
 
   function exportCSV() {
     const h = ["date","time","type","direction","entry","sl","tp","lots","exitPrice","exitTime","rr","pnl","session","setup","emotion","notes"];
-    const rows = trades.map(t => h.map(k => k === "pnl" ? (calcPnL(t.direction, t.entry, t.exitPrice, t.lots) ?? "") : (t[k] ?? "")).join(","));
+    const rows = trades.map((t: any) => h.map(k => k === "pnl" ? (calcPnL(t.direction, t.entry, t.exitPrice, t.lots) ?? "") : (t[k] ?? "")).join(","));
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([[h.join(","), ...rows].join("\n")], { type: "text/csv" })); a.download = `xauusd_${new Date().toISOString().slice(0,10)}.csv`; a.click();
   }
   function exportJSON() { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(trades, null, 2)], { type: "application/json" })); a.download = `xauusd_${new Date().toISOString().slice(0,10)}.json`; a.click(); }
-  function importJSON(e) { const file = e.target.files?.[0]; if (!file) return; const r = new FileReader(); r.onload = ev => { try { const d = JSON.parse(ev.target.result); if (Array.isArray(d)) setTrades(d); } catch {} }; r.readAsText(file); e.target.value = ""; }
+  function importJSON(e: React.ChangeEvent<HTMLInputElement>) { const file = e.target.files?.[0]; if (!file) return; const r = new FileReader(); r.onload = ev => { try { const d = JSON.parse(ev.target?.result as string); if (Array.isArray(d)) setTrades(d); } catch {} }; r.readAsText(file); e.target.value = ""; }
 
-  const pnlColor = pnl => (pnl ?? 0) > 0 ? "text-emerald-400" : (pnl ?? 0) < 0 ? "text-red-400" : "text-zinc-400";
+  const pnlColor = (pnl: number | null) => (pnl ?? 0) > 0 ? "text-emerald-400" : (pnl ?? 0) < 0 ? "text-red-400" : "text-zinc-400";
   const mono = { fontFamily: "'JetBrains Mono', 'Fira Code', monospace" };
 
   const NavTabs = () => (
@@ -139,7 +317,7 @@ export default function TradingJournal() {
     </div>
   );
 
-  const TradeRow = ({ t }) => {
+  const TradeRow = ({ t }: { t: any }) => {
     const pnl = calcPnL(t.direction, t.entry, t.exitPrice, t.lots);
     return (
       <button onClick={() => { setSelected(t); setView("detail"); }} className="w-full text-left bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 rounded-xl p-3 transition-all">
@@ -151,7 +329,7 @@ export default function TradingJournal() {
     );
   };
 
-  const GroupView = ({ groups, labelFn }) => (
+  const GroupView = ({ groups, labelFn }: { groups: [string, any[]][]; labelFn: (k: string) => string }) => (
     <div className="p-4 flex flex-col gap-3">
       {groups.length === 0 && <div className="text-center py-20 text-zinc-600"><div className="text-4xl mb-3">◈</div><div className="text-sm">Aucun trade enregistré</div></div>}
       {groups.map(([key, gTrades]) => {
@@ -162,7 +340,10 @@ export default function TradingJournal() {
             <button onClick={() => setExpandedGroup(isOpen ? null : key)} className="w-full p-4 text-left">
               <div className="flex items-center justify-between mb-2">
                 <div className="font-bold text-sm capitalize">{labelFn(key)}</div>
-                <div className="flex items-center gap-3"><span className={`font-bold font-mono text-lg ${pnlColor(s.totalPnl)}`}>{s.totalPnl >= 0 ? "+" : ""}${s.totalPnl}</span><span className="text-zinc-500 text-xs">{isOpen ? "▲" : "▼"}</span></div>
+                <div className="flex items-center gap-3">
+                  <span className={`font-bold font-mono text-lg ${pnlColor(s.totalPnl)}`}>{s.totalPnl >= 0 ? "+" : ""}${s.totalPnl}</span>
+                  <span className="text-zinc-500 text-xs">{isOpen ? "▲" : "▼"}</span>
+                </div>
               </div>
               <div className="flex gap-3 text-xs font-mono text-zinc-500">
                 <span>{s.closed} trades</span>
@@ -172,8 +353,9 @@ export default function TradingJournal() {
             </button>
             {isOpen && (
               <div className="px-4 pb-4 border-t border-zinc-800 pt-4">
-                <SummaryBlock stats={s} pnlColor={pnlColor} />
-                <div className="flex flex-col gap-2">{gTrades.sort((a,b) => b.date.localeCompare(a.date)).map(t => <TradeRow key={t.id} t={t} />)}</div>
+                <SummaryBlock stats={s} pnlColor={pnlColor} trades={gTrades} />
+                <div className="text-zinc-500 text-xs uppercase tracking-widest mb-2 mt-1">Trades</div>
+                <div className="flex flex-col gap-2">{gTrades.sort((a: any, b: any) => b.date.localeCompare(a.date)).map((t: any) => <TradeRow key={t.id} t={t} />)}</div>
               </div>
             )}
           </div>
@@ -216,12 +398,12 @@ export default function TradingJournal() {
         <button onClick={() => setView("log")} className="text-zinc-500 hover:text-amber-400 mb-6 text-sm transition-colors">← Annuler</button>
         <div className="text-amber-400 text-xs tracking-widest uppercase mb-1">Nouveau trade</div>
         <div className="text-xl font-bold mb-6">XAUUSD</div>
-        <div className="grid grid-cols-2 gap-3 mb-4">{[["date","Date","date"],["time","Heure","time"]].map(([n,l,tp]) => (<div key={n}><label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">{l}</label><input type={tp} name={n} value={form[n]} onChange={handleChange} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:border-amber-500 outline-none" /></div>))}</div>
+        <div className="grid grid-cols-2 gap-3 mb-4">{[["date","Date","date"],["time","Heure","time"]].map(([n,l,tp]) => (<div key={n}><label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">{l}</label><input type={tp} name={n} value={(form as any)[n]} onChange={handleChange} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:border-amber-500 outline-none" /></div>))}</div>
         <div className="grid grid-cols-2 gap-3 mb-4">
           <div><label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">Type</label><div className="flex gap-2">{["Day","Swing"].map(v => <button key={v} onClick={() => setForm(f => ({...f, type: v}))} className={`flex-1 py-2 rounded-lg text-sm border transition-colors ${form.type === v ? "border-amber-500 text-amber-400 bg-amber-900/20" : "border-zinc-700 text-zinc-400 bg-zinc-900"}`}>{v}</button>)}</div></div>
           <div><label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">Direction</label><div className="flex gap-2">{["Long","Short"].map(v => <button key={v} onClick={() => setForm(f => ({...f, direction: v}))} className={`flex-1 py-2 rounded-lg text-sm border transition-colors ${form.direction === v ? v === "Long" ? "border-emerald-500 text-emerald-400 bg-emerald-900/20" : "border-red-500 text-red-400 bg-red-900/20" : "border-zinc-700 text-zinc-400 bg-zinc-900"}`}>{v}</button>)}</div></div>
         </div>
-        <div className="grid grid-cols-3 gap-3 mb-4">{[["entry","Entry *","text-amber-300"],["sl","Stop Loss","text-red-400"],["tp","Take Profit","text-emerald-400"]].map(([n,l,c]) => (<div key={n}><label className={`text-xs uppercase tracking-widest block mb-1 ${c}`}>{l}</label><input type="number" name={n} value={form[n]} onChange={handleChange} placeholder="0.00" className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:border-amber-500 outline-none" /></div>))}</div>
+        <div className="grid grid-cols-3 gap-3 mb-4">{[["entry","Entry *","text-amber-300"],["sl","Stop Loss","text-red-400"],["tp","Take Profit","text-emerald-400"]].map(([n,l,c]) => (<div key={n}><label className={`text-xs uppercase tracking-widest block mb-1 ${c}`}>{l}</label><input type="number" name={n} value={(form as any)[n]} onChange={handleChange} placeholder="0.00" className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:border-amber-500 outline-none" /></div>))}</div>
         {rr !== null && <div className="bg-amber-900/20 border border-amber-800/50 rounded-lg px-3 py-2 text-sm text-amber-300 mb-4">R:R calculé → <strong>1:{rr}</strong></div>}
         <div className="mb-4"><label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">Lots *</label><input type="number" name="lots" value={form.lots} onChange={handleChange} placeholder="0.01" step="0.01" className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:border-amber-500 outline-none" /></div>
         <div className="grid grid-cols-2 gap-3 mb-4">
@@ -281,7 +463,7 @@ export default function TradingJournal() {
       {trades.length > 0 && <div className="px-4 py-3 flex gap-2 border-b border-zinc-900 overflow-x-auto">{["All","Long","Short"].map(f => <button key={f} onClick={() => setFilterDir(f)} className={`px-3 py-1 rounded-lg text-xs border whitespace-nowrap transition-colors ${filterDir === f ? "border-amber-500 text-amber-400" : "border-zinc-800 text-zinc-500"}`}>{f}</button>)}<div className="w-px bg-zinc-800 mx-1" />{["All","Day","Swing"].map(f => <button key={f} onClick={() => setFilterType(f)} className={`px-3 py-1 rounded-lg text-xs border whitespace-nowrap transition-colors ${filterType === f ? "border-amber-500 text-amber-400" : "border-zinc-800 text-zinc-500"}`}>{f}</button>)}</div>}
       <div className="p-4 flex flex-col gap-2">
         {filteredTrades.length === 0 && <div className="text-center py-20 text-zinc-600"><div className="text-4xl mb-3">◈</div><div className="text-sm">Aucun trade enregistré</div><div className="text-xs mt-1 text-zinc-700">Appuie sur + TRADE pour commencer</div></div>}
-        {filteredTrades.map(t => {
+        {filteredTrades.map((t: any) => {
           const pnl = calcPnL(t.direction, t.entry, t.exitPrice, t.lots);
           return (
             <button key={t.id} onClick={() => { setSelected(t); setView("detail"); }} className="w-full text-left bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 rounded-xl p-4 transition-all">
